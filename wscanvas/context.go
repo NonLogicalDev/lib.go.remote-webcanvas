@@ -17,56 +17,45 @@ type CMDBase struct {
 type Context struct {
 	context.Context
 	conn   *websocket.Conn
-	buffer *bytes.Buffer
+	buffer []interface{}
 }
 
-type CMDDrawBoxFill struct {
+/*
+	Commands:
+*/
+
+type CMDDrawBox struct {
 	CMDBase
 	Rect  Rect   `json:"rect"`
-	Color *Color `json:"color,omitempty"`
+	Style Style `json:"style"`
 }
 
-func (ctx *Context) BufferStart() {
-	if ctx.buffer == nil {
-		ctx.buffer = bytes.NewBuffer(nil)
-	}
-}
-
-func (ctx *Context) BufferWrite() error {
-	cmd := ctx.buffer.Bytes()
-	err := ctx.writeRPCCMD(cmd)
-	if err == nil {
-		ctx.BufferClear()
-	}
-	return err
-}
-
-func (ctx *Context) BufferClear() {
-	ctx.buffer = nil
-}
-
-func (ctx *Context) writeRPCCMD(cmd []byte) error {
-	return ctx.conn.WriteMessage(websocket.TextMessage, cmd)
-}
-
-func (ctx *Context) sendCMD(cmd []byte) error {
-	if ctx.buffer != nil {
-		ctx.buffer.WriteRune('\n')
-		ctx.buffer.Write(cmd)
-		return nil
-	}
-	return ctx.writeRPCCMD(cmd)
-}
-
-func (ctx *Context) DrawBoxFill(r Rect, c *Color) error {
-	cmd, _ := json.Marshal(CMDDrawBoxFill{
+func (ctx *Context) DrawBox(r Rect, s Style) error {
+	return ctx.sendCMD(CMDDrawBox{
 		CMDBase: CMDBase{
-			Name: "drawBoxFill",
+			Name: "drawBox",
 		},
 		Rect:  r,
-		Color: c,
+		Style: s,
 	})
-	return ctx.sendCMD(cmd)
+}
+
+type CMDDrawText struct {
+	CMDBase
+	Text  Text  `json:"text"`
+	Point Point `json:"point"`
+	Style Style `json:"style"`
+}
+
+func (ctx *Context) DrawText(text Text, point Point, s Style) error {
+	return ctx.sendCMD(CMDDrawText{
+		CMDBase: CMDBase{
+			Name: "drawText",
+		},
+		Text:    text,
+		Point:   point,
+		Style:   s,
+	})
 }
 
 type CMDSetCanvasSize struct {
@@ -76,14 +65,13 @@ type CMDSetCanvasSize struct {
 }
 
 func (ctx *Context) SetCanvasSize(size Point) error {
-	cmd, _ := json.Marshal(CMDSetCanvasSize{
+	return ctx.sendCMD(CMDSetCanvasSize{
 		CMDBase: CMDBase{
 			Name: "setCanvasSize",
 		},
 		W: size.X,
 		H: size.Y,
 	})
-	return ctx.sendCMD(cmd)
 }
 
 type CMDSetButtons struct {
@@ -92,13 +80,12 @@ type CMDSetButtons struct {
 }
 
 func (ctx *Context) SetButtons(buttons []Button) error {
-	cmd, _ := json.Marshal(CMDSetButtons{
+	return ctx.sendCMD(CMDSetButtons{
 		CMDBase: CMDBase{
 			Name: "setButtons",
 		},
 		Buttons: buttons,
 	})
-	return ctx.sendCMD(cmd)
 }
 
 type RPCEvent struct {
@@ -117,3 +104,51 @@ func (ctx *Context) OnEvent(f func(eventType string, eventData []byte) error) er
 	}
 	return f(event.Type, data)
 }
+
+/*
+	Buffer Implementation:
+*/
+
+func (ctx *Context) BufferStart() {
+	if ctx.buffer == nil {
+		ctx.buffer = make([]interface{}, 0)
+	}
+}
+
+func (ctx *Context) BufferWrite() error {
+	err := ctx.writeRPCCMD(ctx.buffer...)
+	if err == nil {
+		ctx.BufferClear()
+	}
+	return err
+}
+
+func (ctx *Context) BufferClear() {
+	ctx.buffer = nil
+}
+
+func (ctx *Context) sendCMD(cmd interface{}) error {
+	if ctx.buffer != nil {
+		ctx.buffer = append(ctx.buffer, cmd)
+		return nil
+	}
+	return ctx.writeRPCCMD(cmd)
+}
+
+/*
+	Wire Implementation:
+*/
+
+func (ctx *Context) writeRPCCMD(cmds... interface{}) error {
+	b := bytes.NewBuffer(nil)
+
+	// JSON Implementation:
+	e := json.NewEncoder(b)
+	for _, cmd := range cmds {
+		e.Encode(cmd)
+		b.WriteRune('\n')
+	}
+
+	return ctx.conn.WriteMessage(websocket.TextMessage, b.Bytes())
+}
+
